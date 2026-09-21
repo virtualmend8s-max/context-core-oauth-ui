@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Context Core — Autorizar acesso</title>
+<style>
+:root{font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif;color-scheme:dark}
+body{margin:0;background:#0b0f12;color:#e8eef2;min-height:100vh;display:grid;place-items:center;padding:20px}
+.card{width:min(560px,100%);background:#12181d;border:1px solid #28323a;border-radius:18px;padding:24px;box-sizing:border-box}
+h1{font-size:24px;margin:0 0 8px}.muted{color:#9fb0bc}.row{display:grid;gap:10px;margin-top:16px}
+input,button{font:inherit;border-radius:10px;padding:12px 14px}
+input{background:#0c1115;color:#fff;border:1px solid #34414a}
+button{border:0;cursor:pointer;font-weight:650}.primary{background:#3ecf8e;color:#062317}.secondary{background:#26313a;color:#e8eef2}.danger{background:#4a2429;color:#ffd9dd}
+.scope{background:#0c1115;border:1px solid #26313a;border-radius:10px;padding:12px;margin-top:12px;overflow-wrap:anywhere}
+#error{color:#ff9da7;white-space:pre-wrap}.ok{color:#8ee6b7} small{color:#9fb0bc}
+</style>
+</head>
+<body><main class="card">
+<h1>Context Core</h1>
+<p class="muted">Autorize o ChatGPT a acessar somente as ferramentas do Context Core permitidas para sua conta.</p>
+<div id="status">Carregando…</div>
+<div id="login" hidden>
+  <div class="row">
+    <input id="email" type="email" autocomplete="email" placeholder="Seu e-mail">
+    <input id="password" type="password" autocomplete="current-password" placeholder="Sua senha">
+    <button id="signin" class="primary">Entrar</button>
+    <button id="magic" class="secondary">Enviar link mágico</button>
+  </div>
+  <p><small>O link mágico não cria uma nova conta.</small></p>
+</div>
+<div id="consent" hidden>
+  <div class="scope">
+    <div><strong>Aplicativo:</strong> <span id="client"></span></div>
+    <div><strong>Retorno:</strong> <span id="redirect"></span></div>
+    <div><strong>Permissões:</strong> <span id="scopes"></span></div>
+  </div>
+  <div class="row">
+    <button id="approve" class="primary">Autorizar</button>
+    <button id="deny" class="danger">Negar</button>
+  </div>
+</div>
+<p id="error"></p>
+</main>
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+const SUPABASE_URL="https://efpccutoctqbpqaylbsx.supabase.co";
+const PUBLISHABLE_KEY="sb_publishable_5tb5hYh07IxGjV-T9csHJg_qaHCjtPt";
+const CONSENT_URL="https://virtualmend8s-max.github.io/context-core-oauth-ui/oauth/consent/";
+const supabase=createClient(SUPABASE_URL,PUBLISHABLE_KEY);
+const q=new URLSearchParams(location.search);
+let authorizationId=q.get("authorization_id");
+if(authorizationId) sessionStorage.setItem("context_core_authorization_id",authorizationId);
+if(!authorizationId) authorizationId=sessionStorage.getItem("context_core_authorization_id");
+const $=id=>document.getElementById(id);
+function err(e){$("error").textContent=e?.message||String(e||"Erro desconhecido");}
+async function showConsent(){
+  if(!authorizationId){$("status").textContent="Solicitação inválida: authorization_id ausente.";return;}
+  const {data:{user},error:userError}=await supabase.auth.getUser();
+  if(userError||!user){$("status").textContent="Entre para continuar.";$("login").hidden=false;return;}
+  $("login").hidden=true;
+  const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
+  if(error||!data){err(error||"Não foi possível ler a solicitação OAuth.");return;}
+  if(!("authorization_id" in data)){sessionStorage.removeItem("context_core_authorization_id");location.assign(data.redirect_url);return;}
+  $("client").textContent=data.client?.name||"Cliente MCP";
+  $("redirect").textContent=data.redirect_uri||"";
+  $("scopes").textContent=(data.scope||"").split(" ").filter(Boolean).join(", ")||"Acesso autenticado";
+  $("status").textContent="Revise e confirme o acesso.";
+  $("consent").hidden=false;
+}
+$("signin").onclick=async()=>{$("error").textContent="";const email=$("email").value.trim(),password=$("password").value;
+  const {error}=await supabase.auth.signInWithPassword({email,password});if(error){err(error);return;}await showConsent();};
+$("magic").onclick=async()=>{$("error").textContent="";const email=$("email").value.trim();if(!email){err("Informe seu e-mail.");return;}
+  const {error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:CONSENT_URL,shouldCreateUser:false}});
+  if(error){err(error);return;}$("status").innerHTML='<span class="ok">Link enviado. Abra-o neste navegador e volte para esta autorização.</span>';};
+$("approve").onclick=async()=>{const {data,error}=await supabase.auth.oauth.approveAuthorization(authorizationId);if(error){err(error);return;}sessionStorage.removeItem("context_core_authorization_id");location.assign(data.redirect_url);};
+$("deny").onclick=async()=>{const {data,error}=await supabase.auth.oauth.denyAuthorization(authorizationId);if(error){err(error);return;}sessionStorage.removeItem("context_core_authorization_id");location.assign(data.redirect_url);};
+await showConsent();
+</script>
+</body></html>
