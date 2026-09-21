@@ -47,21 +47,33 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL="https://efpccutoctqbpqaylbsx.supabase.co";
 const PUBLISHABLE_KEY="sb_publishable_5tb5hYh07IxGjV-T9csHJg_qaHCjtPt";
 const CONSENT_URL="https://virtualmend8s-max.github.io/context-core-oauth-ui/oauth/consent/";
+const STORAGE_KEY="context_core_pending_authorization";
+const TTL_MS=15*60*1000;
 const supabase=createClient(SUPABASE_URL,PUBLISHABLE_KEY);
-const q=new URLSearchParams(location.search);
-let authorizationId=q.get("authorization_id");
-if(authorizationId) sessionStorage.setItem("context_core_authorization_id",authorizationId);
-if(!authorizationId) authorizationId=sessionStorage.getItem("context_core_authorization_id");
 const $=id=>document.getElementById(id);
 function err(e){$("error").textContent=e?.message||String(e||"Erro desconhecido");}
+function savePending(id){localStorage.setItem(STORAGE_KEY,JSON.stringify({id,expiresAt:Date.now()+TTL_MS}));}
+function clearPending(){localStorage.removeItem(STORAGE_KEY);}
+function loadPending(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY); if(!raw)return null;
+    const p=JSON.parse(raw); if(!p?.id||!p?.expiresAt||Date.now()>p.expiresAt){clearPending();return null;}
+    return p.id;
+  }catch{clearPending();return null;}
+}
+const q=new URLSearchParams(location.search);
+let authorizationId=q.get("authorization_id");
+if(authorizationId) savePending(authorizationId);
+if(!authorizationId) authorizationId=loadPending();
+
 async function showConsent(){
-  if(!authorizationId){$("status").textContent="Solicitação inválida: authorization_id ausente.";return;}
+  if(!authorizationId){$("status").textContent="Solicitação inválida: authorization_id ausente ou expirado.";return;}
   const {data:{user},error:userError}=await supabase.auth.getUser();
   if(userError||!user){$("status").textContent="Entre para continuar.";$("login").hidden=false;return;}
   $("login").hidden=true;
   const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
   if(error||!data){err(error||"Não foi possível ler a solicitação OAuth.");return;}
-  if(!("authorization_id" in data)){sessionStorage.removeItem("context_core_authorization_id");location.assign(data.redirect_url);return;}
+  if(!("authorization_id" in data)){clearPending();location.assign(data.redirect_url);return;}
   $("client").textContent=data.client?.name||"Cliente MCP";
   $("redirect").textContent=data.redirect_uri||"";
   $("scopes").textContent=(data.scope||"").split(" ").filter(Boolean).join(", ")||"Acesso autenticado";
@@ -71,10 +83,12 @@ async function showConsent(){
 $("signin").onclick=async()=>{$("error").textContent="";const email=$("email").value.trim(),password=$("password").value;
   const {error}=await supabase.auth.signInWithPassword({email,password});if(error){err(error);return;}await showConsent();};
 $("magic").onclick=async()=>{$("error").textContent="";const email=$("email").value.trim();if(!email){err("Informe seu e-mail.");return;}
-  const {error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:CONSENT_URL,shouldCreateUser:false}});
-  if(error){err(error);return;}$("status").innerHTML='<span class="ok">Link enviado. Abra-o neste navegador e volte para esta autorização.</span>';};
-$("approve").onclick=async()=>{const {data,error}=await supabase.auth.oauth.approveAuthorization(authorizationId);if(error){err(error);return;}sessionStorage.removeItem("context_core_authorization_id");location.assign(data.redirect_url);};
-$("deny").onclick=async()=>{const {data,error}=await supabase.auth.oauth.denyAuthorization(authorizationId);if(error){err(error);return;}sessionStorage.removeItem("context_core_authorization_id");location.assign(data.redirect_url);};
+  savePending(authorizationId);
+  const redirectTo=CONSENT_URL+"?authorization_id="+encodeURIComponent(authorizationId);
+  const {error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
+  if(error){err(error);return;}$("status").innerHTML='<span class="ok">Link enviado. Abra-o neste navegador para continuar a autorização.</span>';};
+$("approve").onclick=async()=>{const {data,error}=await supabase.auth.oauth.approveAuthorization(authorizationId);if(error){err(error);return;}clearPending();location.assign(data.redirect_url);};
+$("deny").onclick=async()=>{const {data,error}=await supabase.auth.oauth.denyAuthorization(authorizationId);if(error){err(error);return;}clearPending();location.assign(data.redirect_url);};
 await showConsent();
 </script>
 </body></html>
